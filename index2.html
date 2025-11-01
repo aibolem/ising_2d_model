@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Ising 2D → Magnetize to QR</title>
+
+<!-- QR generator (cdn) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PT Sans", Arial; margin:0; background:#111; color:#eaeaea; }
+  .wrap { display:flex; gap:18px; padding:16px; height:100vh; box-sizing:border-box; }
+  .left { flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  canvas { background:#000; border:6px solid #111; box-shadow:0 6px 18px rgba(0,0,0,0.6); image-rendering: pixelated; }
+  .right { width:360px; background:#0d0d0d; padding:16px; border-left:1px solid #1f1f1f; overflow:auto; }
+  h1 { margin:0 0 12px 0; font-size:20px; color:#9cf; }
+  .row { margin:8px 0; display:flex; gap:8px; align-items:center; }
+  label { width:120px; font-size:13px; color:#ccc; }
+  input[type=range]{ width:160px; }
+  select,input[type=text] { width:160px; padding:4px; background:#121212; border:1px solid #222; color:#ddd; }
+  button { background:#222; color:#eaeaea; border:1px solid #333; padding:6px 10px; cursor:pointer; }
+  button:hover{ background:#333 }
+  .stat { font-family: monospace; font-size:13px; color:#dbe; margin-top:12px; }
+  .small { font-size:12px; color:#aab; margin-top:6px; }
+  a { color:#6cf; }
+  footer { position:fixed; left:0; right:0; bottom:6px; text-align:center; font-size:12px; color:#666; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="left">
+    <canvas id="grid" width="640" height="640"></canvas>
+    <div class="small">Клеток: <span id="cellsLabel"></span> — Используй <strong>Magnetize to QR</strong>, чтобы заставить решётку самоорганизоваться.</div>
+  </div>
+
+  <div class="right">
+    <h1>Ising 2D → QR Magnetize</h1>
+
+    <div class="row"><label>QR target (URL):</label>
+      <input type="text" id="qrtext" value="https://ru.wikipedia.org/wiki/Цепь_Маркова"/></div>
+
+    <div class="row"><label>Grid size (N):</label>
+      <select id="gridsize">
+        <option>32</option><option>48</option><option selected>64</option><option>96</option><option>128</option>
+      </select></div>
+
+    <div class="row"><label>Temperature T:</label>
+      <input type="range" id="temp" min="0.1" max="5" step="0.05" value="2.5"/>
+      <div style="width:48px;text-align:right" id="tempVal">2.50</div>
+    </div>
+
+    <div class="row"><label>Field strength h:</label>
+      <input type="range" id="field" min="0" max="5" step="0.1" value="0.0"/>
+      <div style="width:48px;text-align:right" id="fieldVal">0.0</div>
+    </div>
+
+    <div class="row"><label>MC steps / frame:</label>
+      <input type="number" id="stepsPerFrame" value="2000" min="1" style="width:90px;padding:4px;background:#121212;color:#ddd;border:1px solid #222;"/></div>
+
+    <div class="row">
+      <button id="initBtn">Reset Grid</button>
+      <button id="randomizeBtn">Randomize</button>
+    </div>
+
+    <div class="row">
+      <button id="startBtn">Start</button>
+      <button id="stepBtn">Step</button>
+      <button id="stopBtn">Stop</button>
+    </div>
+
+    <div class="row">
+      <button id="magnetizeBtn">Magnetize to QR</button>
+      <button id="clearTargetBtn">Clear target</button>
+    </div>
+
+    <div class="row">
+      <button id="downloadBtn">Download PNG</button>
+      <button id="downloadJsonBtn">Download state JSON</button>
+    </div>
+
+    <div class="stat">
+      Steps: <span id="steps">0</span><br/>
+      M (magnetization): <span id="M">0</span><br/>
+      Energy U: <span id="U">0</span>
+    </div>
+
+    <div class="small" style="margin-top:12px">
+      Алгоритм: Метрополис Монте-Карло. <br/>
+      Пояснение: при включённом «QR field» каждому сайту добавляется энергия −h * s * t, где t∈{+1,−1} — целевой бит QR.
+    </div>
+  </div>
+</div>
+
+<footer>Сгенерировано ChatGPT — Ising → QR demo</footer>
+
+<script>
+/* === Core Ising + QR magnetize implementation ===
+   Single-file, no server required. Uses qrcode lib to build a canvas QR image,
+   reads pixels to create target pattern (targetSpin[x][y] = +1 or -1).
+   Adds external field E_target = -h * s * targetSpin for Metropolis acceptance.
+*/
+
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d', { alpha: false });
+const tempSlider = document.getElementById('temp');
+const tempVal = document.getElementById('tempVal');
+const fieldSlider = document.getElementById('field');
+const fieldVal = document.getElementById('fieldVal');
+const stepsPerFrameInput = document.getElementById('stepsPerFrame');
+const gridsizeSel = document.getElementById('gridsize');
+const qrtextInput = document.getElementById('qrtext');
+
+const stepsSpan = document.getElementById('steps');
+const MSpan = document.getElementById('M');
+const USpan = document.getElementById('U');
+const cellsLabel = document.getElementById('cellsLabel');
+
+let N = parseInt(gridsizeSel.value);
+let cellSize = Math.floor(canvas.width / N);
+let spin = []; // 2D array of +1/-1
+let target = null; // 2D array target spins or null
+let running = false;
+let steps = 0;
+
+function allocGrid(n, fill=1) {
+  const arr = new Array(n);
+  for (let i=0;i<n;i++){
+    arr[i] = new Array(n).fill(fill);
+  }
+  return arr;
+}
+
+function initGrid(n, mode='zeros') {
+  N = n;
+  cellSize = Math.floor(canvas.width / N);
+  spin = allocGrid(N, 1);
+  if (mode === 'random') {
+    for (let i=0;i<N;i++) for (let j=0;j<N;j++) spin[i][j] = Math.random()<0.5 ? 1 : -1;
+  } else {
+    for (let i=0;i<N;i++) for (let j=0;j<N;j++) spin[i][j] = 1;
+  }
+  steps = 0;
+  updateStats();
+  drawGrid();
+  cellsLabel.textContent = `${N}×${N}`;
+}
+
+function randomizeGrid() { initGrid(N,'random'); }
+
+function idxWrap(x) { // periodic boundary
+  if (x<0) return x+N;
+  if (x>=N) return x-N;
+  return x;
+}
+
+function neighborSum(i,j) {
+  // 4-neighbors
+  return spin[idxWrap(i-1)][j] + spin[idxWrap(i+1)][j] + spin[i][idxWrap(j-1)] + spin[i][idxWrap(j+1)];
+}
+
+function energySite(i,j, h_ext=0, useTarget=false) {
+  const s = spin[i][j];
+  const J = 1;
+  const nb = neighborSum(i,j);
+  let e = -J * s * nb;
+  // external uniform field h_ext (global) -> energy: -h_ext * s
+  if (h_ext) e -= h_ext * s;
+  if (useTarget && target) {
+    const t = target[i] && target[i][j] ? target[i][j] : 0;
+    e -= (h_ext * t * s); // coupling to target using same h_ext param
+  }
+  return e;
+}
+
+function totalEnergy(h_ext=0, useTarget=false) {
+  let U = 0;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++){
+    // count each neighbor pair once: we'll use -J s_i s_j; divide by 2
+    const s = spin[i][j];
+    const nb = neighborSum(i,j);
+    U += -0.5 * 1 * s * nb;
+    if (h_ext) U -= h_ext * s;
+    if (useTarget && target) U -= h_ext * (target[i] && target[i][j] ? target[i][j] * s : 0);
+  }
+  return U;
+}
+
+function magnetization() {
+  let M=0;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++) M += spin[i][j];
+  return M;
+}
+
+// Metropolis step: perform nTrials single-spin flip attempts
+function metropolisStep(nTrials, T, h_ext, useTarget=false) {
+  for (let t=0;t<nTrials;t++){
+    const i = Math.floor(Math.random()*N);
+    const j = Math.floor(Math.random()*N);
+    const s = spin[i][j];
+    const nb = neighborSum(i,j);
+    // energy diff ΔE = E_new - E_old for flipping s -> -s
+    // E_old = -J s nb - h s - h*s*t if target
+    // E_new = -J (-s) nb - h (-s) - h*(-s)*t = -E_old
+    const J = 1;
+    let deltaE = 2 * J * s * nb; // change due to neighbors
+    if (h_ext) deltaE += 2 * h_ext * s;
+    if (useTarget && target) {
+      const tval = target[i] && target[i][j] ? target[i][j] : 0;
+      deltaE += 2 * h_ext * s * tval;
+    }
+    if (deltaE <= 0 || Math.random() < Math.exp(-deltaE / T)) {
+      spin[i][j] = -s;
+    }
+  }
+}
+
+// draw grid to canvas
+function drawGrid() {
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++){
+    const s = spin[i][j];
+    const x = j * cellSize;
+    const y = i * cellSize;
+    ctx.fillStyle = (s>0) ? '#fff' : '#000';
+    ctx.fillRect(x,y, cellSize, cellSize);
+  }
+  // optionally overlay faint grid lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth = 0.2;
+  for (let i=0;i<=N;i++){
+    ctx.beginPath();
+    ctx.moveTo(0, i*cellSize);
+    ctx.lineTo(N*cellSize, i*cellSize);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(i*cellSize, 0);
+    ctx.lineTo(i*cellSize, N*cellSize);
+    ctx.stroke();
+  }
+}
+
+function updateStats() {
+  stepsSpan.textContent = steps;
+  MSpan.textContent = magnetization().toFixed(2);
+  USpan.textContent = totalEnergy(parseFloat(fieldSlider.value), !!target).toFixed(2);
+  tempVal.textContent = parseFloat(tempSlider.value).toFixed(2);
+  fieldVal.textContent = parseFloat(fieldSlider.value).toFixed(2);
+}
+
+// main loop
+let animId = null;
+function frame() {
+  const T = parseFloat(tempSlider.value);
+  const h = parseFloat(fieldSlider.value);
+  const ntrials = Math.max(1, parseInt(stepsPerFrameInput.value) || 100);
+  metropolisStep(ntrials, T, h, !!target);
+  steps += ntrials;
+  drawGrid();
+  updateStats();
+  if (running) animId = requestAnimationFrame(frame);
+}
+
+// QR target generation
+function generateQRTarget(text, gridN) {
+  return new Promise((resolve, reject) => {
+    // create hidden canvas for QR
+    const tmp = document.createElement('canvas');
+    const size = 512;
+    tmp.width = tmp.height = size;
+    // generate high-resolution QR to tmp canvas using qrcode lib
+    QRCode.toCanvas(tmp, text, { width: size, margin:1, color: { dark: '#000', light: '#fff' } }, function(err) {
+      if (err) return reject(err);
+      // read image data and downsample to gridN x gridN
+      const tctx = tmp.getContext('2d');
+      const img = tctx.getImageData(0,0,size,size).data;
+      // build binary target: for each grid cell, sample center
+      const targ = allocGrid(gridN, -1);
+      for (let i=0;i<gridN;i++){
+        for (let j=0;j<gridN;j++){
+          const cx = Math.floor((j + 0.5) * (size / gridN));
+          const cy = Math.floor((i + 0.5) * (size / gridN));
+          const idx = (cy*size + cx) * 4;
+          const r = img[idx], g = img[idx+1], b = img[idx+2];
+          // brightness
+          const bright = (r+g+b)/3;
+          // QR black -> small bright value; black means target +1, white -> -1
+          targ[i][j] = (bright < 128) ? 1 : -1;
+        }
+      }
+      resolve(targ);
+    });
+  });
+}
+
+// UI wiring
+document.getElementById('initBtn').addEventListener('click', ()=> {
+  initGrid(parseInt(gridsizeSel.value));
+});
+document.getElementById('randomizeBtn').addEventListener('click', ()=> randomizeGrid());
+document.getElementById('startBtn').addEventListener('click', ()=> {
+  if (!running) { running = true; frame(); }
+});
+document.getElementById('stopBtn').addEventListener('click', ()=> {
+  running = false; if (animId) cancelAnimationFrame(animId);
+});
+document.getElementById('stepBtn').addEventListener('click', ()=> {
+  metropolisStep(parseInt(stepsPerFrameInput.value), parseFloat(tempSlider.value), parseFloat(fieldSlider.value), !!target);
+  steps += parseInt(stepsPerFrameInput.value);
+  drawGrid(); updateStats();
+});
+tempSlider.addEventListener('input', ()=> updateStats());
+fieldSlider.addEventListener('input', ()=> updateStats());
+gridsizeSel.addEventListener('change', ()=> {
+  initGrid(parseInt(gridsizeSel.value));
+});
+
+document.getElementById('magnetizeBtn').addEventListener('click', async ()=> {
+  const url = qrtextInput.value || '';
+  const gN = parseInt(gridsizeSel.value);
+  try {
+    const targ = await generateQRTarget(url, gN);
+    target = targ;
+    // set field strength to slider value; if zero, nudge to 1.0
+    if (parseFloat(fieldSlider.value) === 0) { fieldSlider.value = 1.2; updateStats(); }
+    alert('QR target is set. Now run Start to let MC align spins (target coupling uses field strength h).');
+  } catch (e) {
+    alert('QR generation failed: ' + e);
+  }
+});
+
+document.getElementById('clearTargetBtn').addEventListener('click', ()=> {
+  target = null;
+  alert('Target cleared.');
+});
+
+document.getElementById('downloadBtn').addEventListener('click', ()=> {
+  const dataUrl = canvas.toDataURL('image/png');
+  const a = document.createElement('a'); a.href = dataUrl; a.download = 'ising_qr.png'; a.click();
+});
+
+document.getElementById('downloadJsonBtn').addEventListener('click', ()=> {
+  const obj = {N, spin, target, steps, temp: parseFloat(tempSlider.value), h: parseFloat(fieldSlider.value)};
+  const blob = new Blob([JSON.stringify(obj)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'ising_state.json'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// initialize
+initGrid(N);
+drawGrid();
+updateStats();
+
+// accessibility: keyboard shortcuts
+window.addEventListener('keydown', (e) => {
+  if (e.key === ' ') { // space toggles start/stop
+    if (running) { running = false; if (animId) cancelAnimationFrame(animId); }
+    else { running = true; frame(); }
+  }
+});
+
+</script>
+</body>
+</html>
