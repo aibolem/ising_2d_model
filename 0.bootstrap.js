@@ -58,36 +58,4 @@ eval("module.exports = function(originalModule) {\n\tif (!originalModule.webpack
 
 /***/ })
 
-// QR-код из текущих параметров симуляции
-const qrButton = document.getElementById('qr_button');
-const qrBox = document.getElementById('qrcode');
-
-qrButton.addEventListener('click', () => {
-    // Читаем текущие значения из интерфейса
-    const steps = document.getElementById('mc_steps')?.textContent?.replace(/\D+/g, '') || '0';
-    const M = document.getElementById('m_avg')?.textContent?.replace(/[^0-9.-]+/g, '') || '0';
-    const U = document.getElementById('u_avg')?.textContent?.replace(/[^0-9.-]+/g, '') || '0';
-    const temp = document.getElementById('temp_input')?.value || '0';
-    const field = document.getElementById('bfield_input')?.value || '0';
-    
-    // Собираем объект данных
-    const info = {
-        Temperature: parseFloat(temp),
-        Field: parseFloat(field),
-        Steps: parseInt(steps),
-        Magnetization: parseFloat(M),
-        Energy: parseFloat(U)
-    };
-
-    // Генерируем QR
-    qrBox.innerHTML = '';
-    QRCode.toCanvas(JSON.stringify(info), { width: 128 }, (err, canvas) => {
-        if (err) {
-            console.error('QR generation error:', err);
-        } else {
-            qrBox.appendChild(canvas);
-        }
-    });
-});
-
 }]);
