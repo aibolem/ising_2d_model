@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Ising 2D → Хуара-автомат (Annealing) + QR Magnetize</title>
+
+<!-- QR library (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+
+<style>
+  :root{
+    --bg:#0b0b0c; --panel:#0f1113; --muted:#9aa; --accent:#7ec8ff;
+  }
+  body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:0; background:var(--bg); color:#e6eef6; }
+  .wrap { display:flex; gap:18px; padding:16px; height:100vh; box-sizing:border-box; align-items:stretch; }
+  .left { flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
+  canvas { background:#000; border:6px solid #0b0b0c; box-shadow:0 8px 24px rgba(0,0,0,0.6); image-rendering: pixelated; width:640px; height:640px; }
+  .right { width:380px; background:var(--panel); padding:16px; border-left:1px solid #1d1f22; overflow:auto; border-radius:6px; }
+  h1 { margin:0 0 12px 0; font-size:18px; color:var(--accent); }
+  .row { margin:8px 0; display:flex; gap:8px; align-items:center; }
+  label { width:130px; font-size:13px; color:#bfcadb; }
+  input[type=range]{ width:150px; }
+  select,input[type=text], input[type=number] { width:160px; padding:6px; background:#0b0b0d; border:1px solid #222; color:#e6eef6; border-radius:4px; }
+  button { background:#121417; color:#e6eef6; border:1px solid #222; padding:8px 10px; cursor:pointer; border-radius:4px; }
+  button:hover{ background:#1b1d20 }
+  .stat { font-family: monospace; font-size:13px; color:#d7ecff; margin-top:12px; white-space:pre-wrap; }
+  .small { font-size:12px; color:#98a6b3; margin-top:6px; }
+  footer { position:fixed; left:0; right:0; bottom:6px; text-align:center; font-size:12px; color:#667; }
+  .qrPreview { display:flex; justify-content:center; margin-top:12px; }
+  .link { color:var(--accent); text-decoration:none; }
+  .group { border:1px solid #222; padding:10px; border-radius:6px; margin-top:8px; background:linear-gradient(180deg,#0c0d0e,#0b0b0c); }
+  .hint { font-size:12px; color:#7f8a95; margin-top:6px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="left">
+    <canvas id="grid" width="640" height="640"></canvas>
+    <div class="small">Клеток: <span id="cellsLabel"></span> — используй <strong>Magnetize to QR</strong>, затем <strong>Хуара-автомат</strong>, чтобы структурировать решётку.</div>
+    <div class="qrPreview" id="qrPreview"></div>
+  </div>
+
+  <div class="right">
+    <h1>Ising 2D — Хуара-автомат + QR</h1>
+
+    <div class="row"><label>QR target (URL / text):</label>
+      <input type="text" id="qrtext" value="https://ru.wikipedia.org/wiki/Цепь_Маркова"/></div>
+
+    <div class="row"><label>Grid size (N):</label>
+      <select id="gridsize">
+        <option>32</option><option>48</option><option selected>64</option><option>96</option><option>128</option>
+      </select></div>
+
+    <div class="row"><label>Temperature T:</label>
+      <input type="range" id="temp" min="0.05" max="5" step="0.01" value="2.50"/>
+      <div style="width:48px;text-align:right" id="tempVal">2.50</div>
+    </div>
+
+    <div class="row"><label>Field strength h:</label>
+      <input type="range" id="field" min="0" max="6" step="0.05" value="0.00"/>
+      <div style="width:48px;text-align:right" id="fieldVal">0.00</div>
+    </div>
+
+    <div class="row"><label>MC steps / frame:</label>
+      <input type="number" id="stepsPerFrame" value="4000" min="1" style="width:90px;padding:4px;"/></div>
+
+    <div class="row">
+      <button id="initBtn">Reset Grid (all +1)</button>
+      <button id="randomizeBtn">Randomize</button>
+    </div>
+
+    <div class="row">
+      <button id="startBtn">Start</button>
+      <button id="stepBtn">Step</button>
+      <button id="stopBtn">Stop</button>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">Хуара-автомат (Simulated Annealing)</div>
+      <div class="row"><label>Target T (end):</label>
+        <input type="number" id="annealEnd" value="0.10" step="0.01" style="width:90px;padding:4px;"/></div>
+      <div class="row"><label>Anneal frames:</label>
+        <input type="number" id="annealFrames" value="150" min="1" style="width:90px;padding:4px;"/></div>
+      <div class="row"><label>Schedule:</label>
+        <select id="annealSchedule">
+          <option value="linear" selected>Linear</option>
+          <option value="exp">Exponential</option>
+        </select></div>
+      <div class="row">
+        <button id="annealStartBtn">Start Хуара</button>
+        <button id="annealStopBtn">Stop Хуара</button>
+      </div>
+      <div class="hint">Рекомендация: установить поле h ≥ 1.5 и запустить Хуара для проявления QR.</div>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <button id="magnetizeBtn">Magnetize to QR</button>
+      <button id="clearTargetBtn">Clear target</button>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <button id="downloadBtn">Download PNG</button>
+      <button id="downloadJsonBtn">Download state JSON</button>
+      <button id="genQrBtn">Generate QR</button>
+    </div>
+
+    <div class="stat" id="stats">
+      Steps: <span id="steps">0</span>
+      M (magnetization): <span id="M">0</span>
+      Energy U: <span id="U">0</span>
+    </div>
+
+    <div class="small" style="margin-top:10px">
+      Алгоритм: Метрополис. Хуара-автомат плавно понижает T от текущего значения до заданного target за указанное число кадров (frames) — на каждом кадре выполняются MC шаги и решётка перерисовывается.
+      <br><br>
+      Совет: если видишь шум — уменьшай T и увеличивай h. Экспериментируй с шагами/фрейм.
+    </div>
+  </div>
+</div>
+
+<footer>Сгенерировано ChatGPT — Ising → Хуара-автомат (Annealing)</footer>
+
+<script>
+/* === Ising + QR + Хуара-автомат (annealing) single-file demo ===
+   - Метрополис MC
+   - QR target generation via qrcode lib
+   - Annealing scheduler (linear or exponential)
+*/
+
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d', { alpha: false });
+const tempSlider = document.getElementById('temp');
+const tempVal = document.getElementById('tempVal');
+const fieldSlider = document.getElementById('field');
+const fieldVal = document.getElementById('fieldVal');
+const stepsPerFrameInput = document.getElementById('stepsPerFrame');
+const gridsizeSel = document.getElementById('gridsize');
+const qrtextInput = document.getElementById('qrtext');
+
+const stepsSpan = document.getElementById('steps');
+const MSpan = document.getElementById('M');
+const USpan = document.getElementById('U');
+const cellsLabel = document.getElementById('cellsLabel');
+const qrPreview = document.getElementById('qrPreview');
+
+const annealEndInput = document.getElementById('annealEnd');
+const annealFramesInput = document.getElementById('annealFrames');
+const annealScheduleSel = document.getElementById('annealSchedule');
+
+let N = parseInt(gridsizeSel.value);
+let cellSize = Math.floor(canvas.width / N);
+let spin = []; // spin[i][j] = +1/-1
+let target = null; // target[i][j] = +1/-1 or null
+let running = false;
+let steps = 0;
+
+// annealing state
+let annealing = false;
+let annealFrame = 0;
+let annealTotalFrames = 0;
+let annealTstart = 0;
+let annealTtarget = 0;
+let annealSchedule = 'linear';
+
+function allocGrid(n, fill=1) {
+  const arr = new Array(n);
+  for (let i=0;i<n;i++){
+    arr[i] = new Array(n).fill(fill);
+  }
+  return arr;
+}
+
+function initGrid(n, mode='zeros') {
+  N = n;
+  cellSize = Math.floor(canvas.width / N);
+  spin = allocGrid(N, 1);
+  if (mode === 'random') {
+    for (let i=0;i<N;i++) for (let j=0;j<N;j++) spin[i][j] = Math.random()<0.5 ? 1 : -1;
+  } else {
+    for (let i=0;i<N;i++) for (let j=0;j<N;j++) spin[i][j] = 1;
+  }
+  steps = 0;
+  annealing = false;
+  updateStats();
+  drawGrid();
+  cellsLabel.textContent = `${N}×${N}`;
+  qrPreview.innerHTML = '';
+}
+
+function randomizeGrid() { initGrid(N,'random'); }
+
+function idxWrap(x) {
+  if (x<0) return x+N;
+  if (x>=N) return x-N;
+  return x;
+}
+
+function neighborSum(i,j) {
+  return spin[idxWrap(i-1)][j] + spin[idxWrap(i+1)][j] + spin[i][idxWrap(j-1)] + spin[i][idxWrap(j+1)];
+}
+
+function totalEnergy(h_ext=0, useTarget=false) {
+  let U = 0;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++){
+    const s = spin[i][j];
+    const nb = neighborSum(i,j);
+    U += -0.5 * 1 * s * nb;
+    if (h_ext) U -= h_ext * s;
+    if (useTarget && target) U -= h_ext * (target[i] && target[i][j] ? target[i][j] * s : 0);
+  }
+  return U;
+}
+
+function magnetization() {
+  let M=0;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++) M += spin[i][j];
+  return M;
+}
+
+function metropolisStep(nTrials, T, h_ext, useTarget=false) {
+  for (let t=0;t<nTrials;t++){
+    const i = Math.floor(Math.random()*N);
+    const j = Math.floor(Math.random()*N);
+    const s = spin[i][j];
+    const nb = neighborSum(i,j);
+    let deltaE = 2 * 1 * s * nb;
+    if (h_ext) deltaE += 2 * h_ext * s;
+    if (useTarget && target) {
+      const tval = (target[i] && target[i][j]) ? target[i][j] : 0;
+      deltaE += 2 * h_ext * s * tval;
+    }
+    if (deltaE <= 0 || Math.random() < Math.exp(-deltaE / T)) {
+      spin[i][j] = -s;
+    }
+  }
+}
+
+function drawGrid() {
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++){
+    const s = spin[i][j];
+    const x = j * cellSize;
+    const y = i * cellSize;
+    ctx.fillStyle = (s>0) ? '#fff' : '#000';
+    ctx.fillRect(x,y, cellSize, cellSize);
+  }
+  // faint grid lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth = 0.2;
+  for (let i=0;i<=N;i++){
+    ctx.beginPath();
+    ctx.moveTo(0, i*cellSize);
+    ctx.lineTo(N*cellSize, i*cellSize);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(i*cellSize, 0);
+    ctx.lineTo(i*cellSize, N*cellSize);
+    ctx.stroke();
+  }
+}
+
+function updateStats() {
+  stepsSpan.textContent = steps;
+  MSpan.textContent = magnetization().toFixed(2);
+  USpan.textContent = totalEnergy(parseFloat(fieldSlider.value), !!target).toFixed(2);
+  tempVal.textContent = parseFloat(tempSlider.value).toFixed(2);
+  fieldVal.textContent = parseFloat(fieldSlider.value).toFixed(2);
+}
+
+let animId = null;
+function frame() {
+  // If annealing is active, compute T for this frame
+  if (annealing) {
+    const f = Math.min(1, annealFrame / annealTotalFrames);
+    let newT;
+    if (annealSchedule === 'linear') {
+      newT = annealTstart * (1 - f) + annealTtarget * f;
+    } else {
+      // exponential cooling: T(t) = T0 * (T_target/T0)^(f)
+      const ratio = annealTtarget / Math.max(1e-12, annealTstart);
+      newT = annealTstart * Math.pow(ratio, f);
+    }
+    tempSlider.value = newT;
+    annealFrame++;
+    if (annealFrame >= annealTotalFrames) {
+      // finish anneal
+      annealing = false;
+    }
+  }
+
+  const T = parseFloat(tempSlider.value);
+  const h = parseFloat(fieldSlider.value);
+  const ntrials = Math.max(1, parseInt(stepsPerFrameInput.value) || 100);
+  metropolisStep(ntrials, T, h, !!target);
+  steps += ntrials;
+  drawGrid();
+  updateStats();
+  if (running || annealing) animId = requestAnimationFrame(frame);
+}
+
+// generate high-res QR on temporary canvas, downsample to N×N target array
+function generateQRTarget(text, gridN) {
+  return new Promise((resolve, reject) => {
+    const tmp = document.createElement('canvas');
+    const size = 512;
+    tmp.width = tmp.height = size;
+    QRCode.toCanvas(tmp, text, { width: size, margin:1, color: { dark: '#000', light: '#fff' } }, function(err) {
+      if (err) return reject(err);
+      const tctx = tmp.getContext('2d');
+      const img = tctx.getImageData(0,0,size,size).data;
+      const targ = allocGrid(gridN, -1);
+      for (let i=0;i<gridN;i++){
+        for (let j=0;j<gridN;j++){
+          const cx = Math.floor((j + 0.5) * (size / gridN));
+          const cy = Math.floor((i + 0.5) * (size / gridN));
+          const idx = (cy*size + cx) * 4;
+          const r = img[idx], g = img[idx+1], b = img[idx+2];
+          const bright = (r+g+b)/3;
+          targ[i][j] = (bright < 128) ? 1 : -1;
+        }
+      }
+      // preview
+      const pv = document.createElement('canvas');
+      pv.width = pv.height = Math.min(160, Math.floor(640*0.25));
+      const pctx = pv.getContext('2d');
+      pctx.drawImage(tmp, 0, 0, pv.width, pv.height);
+      qrPreview.innerHTML = '';
+      qrPreview.appendChild(pv);
+      resolve(targ);
+    });
+  });
+}
+
+// wire UI
+document.getElementById('initBtn').addEventListener('click', ()=> initGrid(parseInt(gridsizeSel.value)));
+document.getElementById('randomizeBtn').addEventListener('click', ()=> randomizeGrid());
+document.getElementById('startBtn').addEventListener('click', ()=> { if (!running) { running = true; annealing = false; frame(); }});
+document.getElementById('stopBtn').addEventListener('click', ()=> { running = false; annealing = false; if (animId) cancelAnimationFrame(animId); });
+document.getElementById('stepBtn').addEventListener('click', ()=> {
+  metropolisStep(parseInt(stepsPerFrameInput.value), parseFloat(tempSlider.value), parseFloat(fieldSlider.value), !!target);
+  steps += parseInt(stepsPerFrameInput.value);
+  drawGrid(); updateStats();
+});
+tempSlider.addEventListener('input', ()=> updateStats());
+fieldSlider.addEventListener('input', ()=> updateStats());
+gridsizeSel.addEventListener('change', ()=> { initGrid(parseInt(gridsizeSel.value)); });
+
+// Magnetize to QR: generate target and set it
+document.getElementById('magnetizeBtn').addEventListener('click', async ()=> {
+  const url = qrtextInput.value || '';
+  const gN = parseInt(gridsizeSel.value);
+  try {
+    const targ = await generateQRTarget(url, gN);
+    target = targ;
+    if (parseFloat(fieldSlider.value) === 0) { fieldSlider.value = 2.5; updateStats(); }
+    alert('QR target установлен. Теперь запусти Хуара-автомат или Start, чтобы MC выровнял решётку к паттерну.');
+  } catch (e) {
+    alert('QR генерация не удалась: ' + e);
+  }
+});
+
+document.getElementById('clearTargetBtn').addEventListener('click', ()=> {
+  target = null;
+  qrPreview.innerHTML = '';
+  alert('Целевой паттерн очищен.');
+});
+
+document.getElementById('downloadBtn').addEventListener('click', ()=> {
+  const dataUrl = canvas.toDataURL('image/png');
+  const a = document.createElement('a'); a.href = dataUrl; a.download = 'ising_qr.png'; a.click();
+});
+
+document.getElementById('downloadJsonBtn').addEventListener('click', ()=> {
+  const obj = {N, spin, target, steps, temp: parseFloat(tempSlider.value), h: parseFloat(fieldSlider.value)};
+  const blob = new Blob([JSON.stringify(obj)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'ising_state.json'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// Generate QR image only (for download/inspection)
+document.getElementById('genQrBtn').addEventListener('click', async ()=> {
+  const text = qrtextInput.value || '';
+  try {
+    const tmp = document.createElement('canvas');
+    tmp.width = tmp.height = 512;
+    await new Promise((res, rej) => QRCode.toCanvas(tmp, text, { width:512, margin:1 }, (err) => err ? rej(err) : res() ));
+    const url = tmp.toDataURL('image/png');
+    const a = document.createElement('a'); a.href = url; a.download = 'qr.png'; a.click();
+  } catch(e){ alert('QR fail: '+e) }
+});
+
+// Annealing controls
+document.getElementById('annealStartBtn').addEventListener('click', ()=> {
+  if (annealing) return;
+  annealing = true;
+  annealFrame = 0;
+  annealTotalFrames = Math.max(1, parseInt(annealFramesInput.value) || 100);
+  annealTstart = parseFloat(tempSlider.value);
+  annealTtarget = parseFloat(annealEndInput.value);
+  annealSchedule = annealScheduleSel.value;
+  // ensure running to animate
+  running = false;
+  if (!animId) frame();
+});
+
+document.getElementById('annealStopBtn').addEventListener('click', ()=> {
+  annealing = false;
+});
+
+// keyboard accessibility: space toggles running
+window.addEventListener('keydown', (e) => {
+  if (e.key === ' ') {
+    if (running) { running = false; if (animId) cancelAnimationFrame(animId); }
+    else { running = true; animId = null; frame(); }
+  }
+});
+
+// init
+initGrid(N);
+drawGrid();
+updateStats();
+
+</script>
+</body>
+</html>

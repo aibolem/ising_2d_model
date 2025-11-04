@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>КЮАР-автомат — Модель Изинга (QR-Automaton)</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+<style>
+:root{--bg:#0b0b0c;--panel:#0f1113;--muted:#9aa;--accent:#7ec8ff;}
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial;margin:0;background:var(--bg);color:#e6eef6}
+.wrap{display:flex;gap:16px;padding:14px;height:100vh;box-sizing:border-box;align-items:stretch}
+.left{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:10px}
+canvas{background:#000;border:6px solid #0b0b0c;box-shadow:0 8px 24px rgba(0,0,0,0.6);image-rendering:pixelated;width:640px;height:640px}
+.right{width:420px;background:var(--panel);padding:14px;border-left:1px solid #1d1f22;overflow:auto;border-radius:6px}
+h1{margin:0 0 10px 0;font-size:18px;color:var(--accent)}
+.row{margin:8px 0;display:flex;gap:8px;align-items:center}
+label{width:150px;font-size:13px;color:#bfcadb}
+input[type=range]{width:160px}
+select,input[type=text],input[type=number]{width:200px;padding:6px;background:#0b0b0d;border:1px solid #222;color:#e6eef6;border-radius:4px}
+button{background:#121417;color:#e6eef6;border:1px solid #222;padding:8px 10px;cursor:pointer;border-radius:4px}
+button:hover{background:#1b1d20}
+.stat{font-family:monospace;font-size:13px;color:#d7ecff;margin-top:12px;white-space:pre-wrap}
+.small{font-size:12px;color:#98a6b3;margin-top:6px}
+footer{position:fixed;left:0;right:0;bottom:6px;text-align:center;font-size:12px;color:#667}
+.qrPreview{display:flex;justify-content:center;margin-top:12px}
+.group{border:1px solid #222;padding:10px;border-radius:6px;margin-top:8px;background:linear-gradient(180deg,#0c0d0e,#0b0b0c)}
+.hint{font-size:12px;color:#7f8a95;margin-top:6px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="left">
+    <canvas id="grid" width="640" height="640"></canvas>
+    <div class="small">Клеток: <span id="cellsLabel">128×128</span> — нажмите «Magnetize to QR» и запустите КЮАР-автомат.</div>
+    <div id="qrStatus" class="small" style="color:#7ec8ff;display:none">QR-паттерн загружен ✅</div>
+    <div class="qrPreview" id="qrPreview"></div>
+  </div>
+
+  <div class="right">
+    <h1>КЮАР-автомат — Модель Изинга</h1>
+
+    <div class="row"><label>QR-цель (текст или URL):</label>
+      <input type="text" id="qrtext" value="https://ru.wikipedia.org/wiki/Цепь_Маркова"/></div>
+
+    <div class="row"><label>Размер решётки:</label>
+      <select id="gridsize">
+        <option value="32">32</option>
+        <option value="64">64</option>
+        <option value="128" selected>128</option>
+        <option value="256">256</option>
+        <option value="512">512</option>
+      </select></div>
+
+    <div class="row"><label>Температура T:</label>
+      <input type="range" id="temp" min="0.01" max="5" step="0.01" value="2.5"/>
+      <div style="width:48px;text-align:right" id="tempVal">2.50</div>
+    </div>
+
+    <div class="row"><label>Поле h:</label>
+      <input type="range" id="field" min="0" max="6" step="0.05" value="0.0"/>
+      <div style="width:48px;text-align:right" id="fieldVal">0.00</div>
+    </div>
+
+    <div class="row"><label>MC шагов / кадр:</label>
+      <input type="number" id="stepsPerFrame" value="4000" min="1" style="width:120px;padding:6px;"/></div>
+
+    <div class="row">
+      <button id="initBtn">Сброс решётки</button>
+      <button id="randomizeBtn">Случайно</button>
+      <button id="magnetizeBtn">Magnetize to QR</button>
+      <button id="clearTargetBtn">Очистить QR</button>
+    </div>
+
+    <div class="row">
+      <button id="startBtn">Старт</button>
+      <button id="stepBtn">Шаг</button>
+      <button id="stopBtn">Стоп</button>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">КЮАР-автомат (Simulated Annealing)</div>
+      <div class="row"><label>Схема охлаждения:</label>
+        <select id="annealSchedule"><option value="exp" selected>Экспоненциальная</option><option value="linear">Линейная</option></select></div>
+      <div class="row"><label>Кадров отжига:</label>
+        <input type="number" id="annealFrames" value="400" min="1" style="width:120px;padding:6px;"/></div>
+      <div class="row"><label>Конечная T:</label>
+        <input type="number" id="annealEnd" value="0.25" step="0.01" style="width:120px;padding:6px;"/></div>
+      <div class="row"><label>Коэф. охлаждения:</label>
+        <input type="range" id="coolRate" min="0.90" max="0.999" step="0.001" value="0.995"/>
+        <div style="width:48px;text-align:right" id="coolRateVal">0.995</div>
+      </div>
+      <div class="row">
+        <button id="annealStartBtn">Запуск КЮАР</button>
+        <button id="annealStopBtn">Стоп КЮАР</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">Отображение QR-поля</div>
+      <div class="row"><label>Показать QR-фон:</label>
+        <input type="checkbox" id="showTarget" checked></div>
+      <div class="row"><label>Прозрачность:</label>
+        <input type="range" id="targetAlpha" min="0" max="1" step="0.05" value="0.35"/>
+        <div style="width:48px;text-align:right" id="targetAlphaVal">0.35</div>
+      </div>
+      <div class="row"><button id="snapshotBtn">Снимок QR</button></div>
+    </div>
+
+    <div class="stat" id="stats">Steps: <span id="steps">0</span>  M: <span id="M">0</span>  U: <span id="U">0</span></div>
+  </div>
+</div>
+
+<footer>© 2025 КЮАР-автомат — Модель Изинга</footer>
+
+<script>
+// === КЮАР-АВТОМАТ v3 ===
+
+const canvas=document.getElementById('grid'),ctx=canvas.getContext('2d',{alpha:false});
+let N=128,cellSize=canvas.width/N,spin=[],target=null,running=false,steps=0;
+const tempSlider=q('temp'),fieldSlider=q('field'),stepsPerFrameInput=q('stepsPerFrame');
+const annealScheduleSel=q('annealSchedule'),annealFramesInput=q('annealFrames'),annealEndInput=q('annealEnd'),coolRateInput=q('coolRate');
+const showTarget=q('showTarget'),targetAlpha=q('targetAlpha');
+function q(id){return document.getElementById(id);}
+function allocGrid(n,f=1){return Array.from({length:n},()=>Array(n).fill(f));}
+function initGrid(n,mode='ones'){N=n;cellSize=canvas.width/N;spin=allocGrid(N,1);
+ if(mode==='random')for(let i=0;i<N;i++)for(let j=0;j<N;j++)spin[i][j]=Math.random()<.5?-1:1;
+ target=null;steps=0;updateStats();drawGrid();q('cellsLabel').textContent=`${N}×${N}`;q('qrPreview').innerHTML='';q('qrStatus').style.display='none';}
+function idx(x){return(x+N)%N;}
+function nb(i,j){return spin[idx(i-1)][j]+spin[idx(i+1)][j]+spin[i][idx(j-1)]+spin[i][idx(j+1)];}
+function totalE(h=0,useT=false){let U=0;for(let i=0;i<N;i++)for(let j=0;j<N;j++){const s=spin[i][j],n=nb(i,j);U+=-0.5*s*n;if(h)U-=h*s;if(useT&&target)U-=h*(target[i]?.[j]||0)*s;}return U;}
+function M(){let m=0;for(let i=0;i<N;i++)for(let j=0;j<N;j++)m+=spin[i][j];return m;}
+function stepMC(n,T,h,useT=false){for(let t=0;t<n;t++){const i=Math.random()*N|0,j=Math.random()*N|0,s=spin[i][j];let dE=2*s*nb(i,j);if(h)dE+=2*h*s;if(useT&&target){const tv=target[i]?.[j]||0;dE+=2*h*s*tv;}if(dE<=0||Math.random()<Math.exp(-Math.min(20,dE/Math.max(1e-6,T))))spin[i][j]=-s;}}
+function drawGrid(){ctx.clearRect(0,0,640,640);
+ for(let i=0;i<N;i++)for(let j=0;j<N;j++){ctx.fillStyle=spin[i][j]>0?'#fff':'#000';ctx.fillRect(j*cellSize,i*cellSize,cellSize,cellSize);}
+ if(target&&showTarget.checked){ctx.globalAlpha=parseFloat(targetAlpha.value);
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++)if(target[i][j]>0){ctx.fillStyle='rgba(0,0,0,0.8)';ctx.fillRect(j*cellSize,i*cellSize,cellSize,cellSize);}
+  ctx.globalAlpha=1;}
+}
+function updateStats(){q('steps').textContent=steps;q('M').textContent=M().toFixed(2);q('U').textContent=totalE(parseFloat(fieldSlider.value),!!target).toFixed(2);
+ q('tempVal').textContent=parseFloat(tempSlider.value).toFixed(2);q('fieldVal').textContent=parseFloat(fieldSlider.value).toFixed(2);
+ q('coolRateVal').textContent=parseFloat(coolRateInput.value);q('targetAlphaVal').textContent=parseFloat(targetAlpha.value);}
+let anim=null,anneal=false,aF=0,aTot=0,aT0=0,aT1=0;
+function frame(){if(anneal){const f=Math.min(1,aF/aTot),r=parseFloat(coolRateInput.value);
+ const sch=annealScheduleSel.value;let T=sch==='linear'?aT0*(1-f)+aT1*f:aT0*Math.pow(aT1/Math.max(1e-9,aT0),f);
+ T*=Math.pow(r,aF*0.5);tempSlider.value=T;aF++;if(aF>=aTot)anneal=false;}
+ const T=parseFloat(tempSlider.value),h=parseFloat(fieldSlider.value),n=Math.max(1,parseInt(stepsPerFrameInput.value)||100);
+ stepMC(n,T,h,!!target);steps+=n;drawGrid();updateStats();if(running||anneal)anim=requestAnimationFrame(frame);}
+async function makeQR(text,n){return new Promise((res,rej)=>{const tmp=document.createElement('canvas');tmp.width=tmp.height=512;
+ QRCode.toCanvas(tmp,text,{width:512,margin:1,color:{dark:'#000',light:'#fff'}},err=>{if(err)return rej(err);
+ const d=tmp.getContext('2d').getImageData(0,0,512,512).data,t=allocGrid(n,-1);
+ for(let i=0;i<n;i++)for(let j=0;j<n;j++){const cx=(j+.5)*512/n|0,cy=(i+.5)*512/n|0,p=(cy*512+cx)*4,br=(d[p]+d[p+1]+d[p+2])/3;t[i][j]=br<128?1:-1;}
+ const pv=document.createElement('canvas');pv.width=pv.height=160;pv.getContext('2d').drawImage(tmp,0,0,160,160);
+ q('qrPreview').innerHTML='';q('qrPreview').appendChild(pv);res(t);});});}
+q('magnetizeBtn').onclick=async()=>{const txt=q('qrtext').value||'';try{target=await makeQR(txt,N);q('qrStatus').style.display='block';if(parseFloat(fieldSlider.value)===0)fieldSlider.value=1.2;alert('QR-паттерн установлен. Можно запускать КЮАР-автомат.');drawGrid();}catch(e){alert('Ошибка QR: '+e);}};
+q('clearTargetBtn').onclick=()=>{target=null;q('qrPreview').innerHTML='';q('qrStatus').style.display='none';drawGrid();};
+q('initBtn').onclick=()=>initGrid(parseInt(q('gridsize').value));q('randomizeBtn').onclick=()=>initGrid(parseInt(q('gridsize').value),'random');
+q('startBtn').onclick=()=>{if(!running){running=true;anneal=false;frame();}};q('stopBtn').onclick=()=>{running=anneal=false;cancelAnimationFrame(anim);};
+q('stepBtn').onclick=()=>{stepMC(parseInt(stepsPerFrameInput.value),parseFloat(tempSlider.value),parseFloat(fieldSlider.value),!!target);steps+=parseInt(stepsPerFrameInput.value);drawGrid();updateStats();};
+q('annealStartBtn').onclick=()=>{anneal=true;aF=0;aTot=parseInt(annealFramesInput.value)||200;aT0=parseFloat(tempSlider.value);aT1=parseFloat(annealEndInput.value);frame();};
+q('annealStopBtn').onclick=()=>anneal=false;
+q('snapshotBtn').onclick=()=>{const a=document.createElement('a');a.href=canvas.toDataURL('image/png');a.download='qr_snapshot.png';a.click();};
+['temp','field','coolRate','targetAlpha'].forEach(id=>q(id).oninput=updateStats);
+q('gridsize').onchange=()=>initGrid(parseInt(q('gridsize').value));
+window.onkeydown=e=>{if(e.key===' '){running=!running;if(running)frame();}};
+initGrid(128);drawGrid();updateStats();
+</script>
+</body>
+</html>
