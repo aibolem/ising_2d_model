@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>qr-automat-v5 — КЮАР-автомат (Ising + QR field + Live charts + Log)</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<style>
+:root{--bg:#0b0b0c;--panel:#0f1113;--muted:#9aa;--accent:#7ec8ff}
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial;margin:0;background:var(--bg);color:#e6eef6}
+.container{display:flex;gap:12px;padding:12px;height:100vh;box-sizing:border-box}
+.left{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;gap:8px}
+canvas{background:#000;border:6px solid #0b0b0c;box-shadow:0 8px 24px rgba(0,0,0,0.6);image-rendering:pixelated;width:640px;height:640px}
+.controls{width:460px;background:var(--panel);padding:12px;border-radius:8px;overflow:auto}
+h1{margin:0 0 8px 0;font-size:18px;color:var(--accent)}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0}
+label{width:140px;color:#bfcadb;font-size:13px}
+input[type=range]{width:160px}
+select,input[type=text],input[type=number]{width:200px;padding:6px;background:#0b0b0d;border:1px solid #222;color:#e6eef6;border-radius:4px}
+button{background:#121417;color:#e6eef6;border:1px solid #222;padding:8px 10px;cursor:pointer;border-radius:4px}
+button:hover{background:#1b1d20}
+.stat{font-family:monospace;color:#d7ecff;margin-top:8px;white-space:pre-wrap}
+.small{font-size:12px;color:#98a6b3}
+.group{border:1px solid #222;padding:8px;border-radius:6px;background:linear-gradient(180deg,#0c0d0e,#0b0b0c);margin-top:8px}
+.footer{position:fixed;left:0;right:0;bottom:6px;text-align:center;font-size:12px;color:#667}
+.preview{display:flex;justify-content:center;margin-top:8px}
+.controls-row{display:flex;gap:8px;flex-wrap:wrap}
+.log{height:120px;overflow:auto;background:#070809;border:1px solid #222;padding:6px;border-radius:6px;color:#9fbcd8;font-size:12px}
+.chart-row{display:flex;gap:8px;width:100%;align-items:flex-start}
+.chart{flex:1;min-height:160px;background:#0b0b0c;border:1px solid #222;border-radius:6px;padding:6px}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="left">
+    <canvas id="grid" width="640" height="640"></canvas>
+    <div class="preview"><div id="qrPreview"></div></div>
+    <div class="small">КЮАР-автомат v5 — QR задаёт поле h(x,y). Нажмите <b>Magnetize to QR</b>, затем <b>Запуск КЮАР</b>.</div>
+    <div id="graphRow" class="chart-row" style="margin-top:8px; width:640px;">
+      <div id="chartT" class="chart"></div>
+      <div id="chartMU" class="chart"></div>
+    </div>
+    <div class="group" style="width:640px;margin-top:8px">
+      <div style="font-weight:600;margin-bottom:6px">Журнал симуляции</div>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <h1>КЮАР-автомат — Ising + MC + QR field</h1>
+
+    <div class="row"><label>QR-цель (текст/URL):</label><input id="qrtext" type="text" value="https://ru.wikipedia.org/wiki/Цепь_Маркова"></div>
+
+    <div class="row"><label>Размер решётки:</label>
+      <select id="gridsize"><option value="32">32</option><option value="64">64</option><option value="128" selected>128</option><option value="256">256</option><option value="512">512</option></select></div>
+
+    <div class="row"><label>Температура T:</label>
+      <input id="temp" type="range" min="0.01" max="5" step="0.01" value="2.5"><input id="tempNum" type="number" step="0.01" value="2.50" style="width:70px"></div>
+
+    <div class="row"><label>Поле (глобальное) H:</label>
+      <input id="field" type="range" min="0" max="4" step="0.05" value="1.2"><input id="fieldNum" type="number" step="0.01" value="1.20" style="width:70px"></div>
+
+    <div class="row"><label>MC шагов / кадр:</label><input id="stepsPerFrame" type="number" value="4000" min="1" style="width:120px"></div>
+
+    <div class="row controls-row">
+      <button id="initBtn">Сброс решётки</button>
+      <button id="randomizeBtn">Случайно</button>
+      <button id="magnetizeBtn">Magnetize to QR</button>
+      <button id="clearTargetBtn">Очистить QR</button>
+    </div>
+
+    <div class="row controls-row">
+      <button id="startBtn">Старт</button>
+      <button id="stepBtn">Шаг</button>
+      <button id="stopBtn">Стоп</button>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">КЮАР-автомат (Отжиг)</div>
+      <div class="row"><label>Схема:</label><select id="annealSchedule"><option value="exp" selected>Экспоненциальная</option><option value="linear">Линейная</option></select></div>
+      <div class="row"><label>Кадров отжига:</label><input id="annealFrames" type="number" value="400" min="1" style="width:120px"></div>
+      <div class="row"><label>Конечная T:</label><input id="annealEnd" type="number" value="0.25" step="0.01" style="width:120px"></div>
+      <div class="row"><label>Коэф. охлажд.:</label><input id="coolRate" type="range" min="0.90" max="0.999" step="0.001" value="0.995"><div style="width:48px;text-align:right" id="coolRateVal">0.995</div></div>
+      <div class="row controls-row"><button id="annealStartBtn">Запуск КЮАР</button><button id="annealStopBtn">Стоп КЮАР</button><label><input id="autoStartAnneal" type="checkbox"> автозапуск КЮАР после Magnetize</label></div>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px"> QR-поле (h(x,y)) и отображение</div>
+      <div class="row"><label>Прозрачность:</label><input id="targetAlpha" type="range" min="0" max="1" step="0.05" value="0.35"><div style="width:48px;text-align:right" id="targetAlphaVal">0.35</div></div>
+      <div class="row"><label>Контраст QR:</label><input id="contrast" type="range" min="0" max="2" step="0.05" value="1"><div style="width:48px;text-align:right" id="contrastVal">1.00</div></div>
+      <div class="row"><label>Инвертировать QR:</label><input id="invertQR" type="checkbox"></div>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">Ось времени (графики)</div>
+      <div class="row"><label>Ось:</label>
+        <label><input type="radio" name="timeAxis" value="steps" checked> Шаги MC</label>
+        <label><input type="radio" name="timeAxis" value="seconds"> Секунды</label></div>
+      <div class="row"><label>Сброс графиков:</label><button id="clearCharts">Сброс</button></div>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">Экспорт</div>
+      <div class="row"><button id="snapshotBtn">Снимок QR</button><button id="downloadJsonBtn">Скачать JSON</button></div>
+    </div>
+
+    <div class="group">
+      <div style="font-weight:600;margin-bottom:6px">Теория</div>
+      <div id="theory" class="small" style="max-height:140px;overflow:auto">
+<p><b>Идея</b>: Марковская цепь задаётся последовательностью конфигураций; Metropolis реализует случайные переходы с вероятностью, соответствующей распределению Больцмана. QR-код вводится как локальное внешнее поле h(x,y), влияющее на энергию спина.</p>
+      </div>
+    </div>
+
+    <div class="stat" id="stats">Steps: <span id="steps">0</span> &nbsp; M: <span id="M">0</span> &nbsp; U: <span id="U">0</span></div>
+  </div>
+</div>
+
+<div class="footer">qr-automat-v5 — generated by ChatGPT</div>
+
+<script>
+// v5 core
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d', {alpha:true});
+const $ = id => document.getElementById(id);
+
+// DOM refs
+const temp = $('temp'), tempNum = $('tempNum'), field = $('field'), fieldNum = $('fieldNum');
+const stepsPerFrame = $('stepsPerFrame'), gridsize = $('gridsize');
+const showTarget = $('showTarget'), targetAlpha = $('targetAlpha');
+const coolRate = $('coolRate'), coolRateVal = $('coolRateVal');
+const targetAlphaVal = $('targetAlphaVal');
+const contrast = $('contrast'), contrastVal = $('contrastVal');
+const invertQR = $('invertQR');
+const autoStartAnneal = $('autoStartAnneal');
+const logEl = $('log');
+
+// charts
+const chartT = document.getElementById('chartT');
+const chartMU = document.getElementById('chartMU');
+Plotly.newPlot(chartT, [{x:[], y:[], mode:'lines', name:'T'}], {margin:{l:30,r:8,t:20,b:30}, title:'T'});
+Plotly.newPlot(chartMU, [{x:[], y:[], mode:'lines', name:'M'},{x:[], y:[], mode:'lines', name:'U', yaxis:'y2'}],
+ {margin:{l:30,r:8,t:20,b:30}, title:'M / U', yaxis:{title:'M'}, yaxis2:{overlaying:'y', side:'right', title:'U'}});
+
+// state
+let N = parseInt(gridsize.value), cellSize = canvas.width / N;
+let spin = [], target = null, hMatrix = null; // hMatrix will be ±1 grid representing QR shape
+let steps = 0, running = false, anim = null, startTime = Date.now();
+
+// anneal state
+let anneal = false, aFrame=0, aTotal=0, aT0=0, aT1=0, aSchedule='exp';
+
+// data buffers for charts
+let dataX=[], dataT=[], dataM=[], dataU=[];
+
+function allocGrid(n, fill=1){ const a = new Array(n); for(let i=0;i<n;i++) a[i]=new Array(n).fill(fill); return a; }
+function initGrid(n, mode='ones'){ N=n; cellSize = canvas.width / N; spin = allocGrid(N,1); if(mode==='random') for(let i=0;i<N;i++) for(let j=0;j<N;j++) spin[i][j]=Math.random()<0.5?-1:1; target=null; hMatrix=null; steps=0; startTime=Date.now(); dataX=[]; dataT=[]; dataM=[]; dataU=[]; updateStats(); draw(); $('qrPreview').innerHTML=''; log('Grid init '+N+'x'+N'); }
+
+function idx(x){ return (x+N)%N; }
+function nb(i,j){ return spin[idx(i-1)][j] + spin[idx(i+1)][j] + spin[i][idx(j-1)] + spin[i][idx(j+1)]; }
+
+function totalE(useH=false){
+  const Hglob = parseFloat(field.value);
+  let U=0;
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++){ const s=spin[i][j]; const n=nb(i,j); U += -0.5 * s * n; if(Hglob) U -= Hglob * (hMatrix ? hMatrix[i][j] : 0) * s; }
+  return U;
+}
+function magnetization(){ let m=0; for(let i=0;i<N;i++) for(let j=0;j<N;j++) m+=spin[i][j]; return m; }
+
+// Metropolis with explicit hMatrix influence
+function metropolisStep(nTrials, T){
+  const Hglob = parseFloat(field.value);
+  for(let t=0;t<nTrials;t++){
+    const i = Math.floor(Math.random()*N), j = Math.floor(Math.random()*N);
+    const s = spin[i][j];
+    const nbSum = nb(i,j);
+    let dE = 2 * s * nbSum;
+    if(hMatrix && Hglob){ dE += 2 * Hglob * s * hMatrix[i][j]; }
+    if(dE <= 0){ spin[i][j] = -s; } else {
+      const ratio = Math.min(40, dE / Math.max(1e-9, T));
+      const p = Math.exp(-ratio);
+      if(Math.random() < p) spin[i][j] = -s;
+    }
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+    ctx.fillStyle = spin[i][j] > 0 ? '#fff' : '#000';
+    ctx.fillRect(j*cellSize, i*cellSize, cellSize, cellSize);
+  }
+  // overlay target visualization
+  if(hMatrix && $('showTarget').checked){
+    ctx.globalAlpha = parseFloat($('targetAlpha').value);
+    const contrastFactor = parseFloat(contrast.value);
+    for(let i=0;i<N;i++) for(let j=0;j<N;j++){
+      const v = hMatrix[i][j] * contrastFactor * (invertQR.checked ? -1 : 1);
+      if(v > 0.5){ ctx.fillStyle = 'rgba(0,0,0,0.9)'; ctx.fillRect(j*cellSize, i*cellSize, cellSize, cellSize); }
+      else if(v < -0.5){ ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(j*cellSize, i*cellSize, cellSize, cellSize); }
+    }
+    ctx.globalAlpha = 1.0;
+  }
+  // light grid lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.2;
+  for(let i=0;i<=N;i++){ ctx.beginPath(); ctx.moveTo(0, i*cellSize); ctx.lineTo(N*cellSize, i*cellSize); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(i*cellSize, 0); ctx.lineTo(i*cellSize, N*cellSize); ctx.stroke(); }
+}
+
+// charts functions
+function pushCharts(x, Tval, Mval, Uval){
+  dataX.push(x); dataT.push(Tval); dataM.push(Mval); dataU.push(Uval);
+  const L=1200; if(dataX.length> L){ dataX.shift(); dataT.shift(); dataM.shift(); dataU.shift(); }
+  Plotly.react(chartT, [{x:dataX, y:dataT, mode:'lines', name:'T'}], {margin:{l:30,r:8,t:20,b:30}, title:'T'});
+  Plotly.react(chartMU, [{x:dataX, y:dataM, mode:'lines', name:'M'},{x:dataX, y:dataU, mode:'lines', name:'U', yaxis:'y2'}],
+    {margin:{l:30,r:8,t:20,b:30}, title:'M / U', yaxis:{title:'M'}, yaxis2:{overlaying:'y', side:'right', title:'U'}});
+}
+
+// main frame
+function frame(){
+  if(anneal){
+    const frac = Math.min(1, aFrame/Math.max(1,aTotal));
+    let Tnew = (aSchedule === 'linear') ? aT0*(1-frac) + aT1*frac : aT0 * Math.pow(aT1/Math.max(1e-9,aT0), frac);
+    const mult = parseFloat(coolRate.value);
+    Tnew *= Math.pow(mult, aFrame*0.5);
+    temp.value = Tnew;
+    aFrame++; if(aFrame >= aTotal) anneal = false;
+  }
+  const Tval = parseFloat(temp.value);
+  metropolisStep(Math.max(1,parseInt(stepsPerFrame.value)||100), Tval);
+  steps += Math.max(1,parseInt(stepsPerFrame.value)||100);
+  draw(); updateStats();
+  const axis = document.querySelector('input[name="timeAxis"]:checked').value;
+  const xVal = axis === 'steps' ? steps : (Date.now() - startTime)/1000.0;
+  pushCharts(xVal, Tval, magnetization(), totalE(true));
+  if(running || anneal) anim = requestAnimationFrame(frame);
+}
+
+// generate hMatrix from QR (±1)
+async function generateHMatrix(text, gridN){
+  return new Promise((resolve,reject)=>{
+    const tmp = document.createElement('canvas'); tmp.width = tmp.height = 512;
+    QRCode.toCanvas(tmp, text, {width:512, margin:1, color:{dark:'#000', light:'#fff'}}, (err)=>{
+      if(err) return reject(err);
+      const d = tmp.getContext('2d').getImageData(0,0,512,512).data;
+      const m = allocGrid(gridN, -1);
+      for(let i=0;i<gridN;i++) for(let j=0;j<gridN;j++){
+        const cx = Math.floor((j+0.5) * (512/gridN)), cy = Math.floor((i+0.5) * (512/gridN));
+        const idx = (cy*512 + cx) * 4; const bright = (d[idx] + d[idx+1] + d[idx+2])/3;
+        m[i][j] = bright < 128 ? 1 : -1;
+      }
+      const pv = document.createElement('canvas'); pv.width = pv.height = 160; pv.getContext('2d').drawImage(tmp,0,0,160,160);
+      $('qrPreview').innerHTML = ''; $('qrPreview').appendChild(pv);
+      resolve(m);
+    });
+  });
+}
+
+// logging helper
+function log(msg){
+  const t = new Date().toLocaleTimeString(); const el = document.createElement('div'); el.textContent = `[${t}] ${msg}`; logEl.prepend(el);
+}
+
+// UI wiring
+$('initBtn').addEventListener('click', ()=> initGrid(parseInt(gridsize.value)));
+$('randomizeBtn').addEventListener('click', ()=> initGrid(parseInt(gridsize.value),'random'));
+$('startBtn').addEventListener('click', ()=> { if(!running){ running=true; anneal=false; frame(); log('Start'); } });
+$('stopBtn').addEventListener('click', ()=> { running=false; anneal=false; cancelAnimationFrame(anim); log('Stop'); });
+$('stepBtn').addEventListener('click', ()=> { metropolisStep(parseInt(stepsPerFrame.value), parseFloat(temp.value)); steps += parseInt(stepsPerFrame.value); draw(); updateStats(); const axis = document.querySelector('input[name=\"timeAxis\"]:checked').value; const xVal = axis==='steps'?steps:(Date.now()-startTime)/1000.0; pushCharts(xVal, parseFloat(temp.value), magnetization(), totalE(true)); log('Step '+steps); });
+
+$('magnetizeBtn').addEventListener('click', async ()=> {
+  const txt = $('qrtext').value || '';
+  try{
+    hMatrix = await generateHMatrix(txt, N);
+    target = hMatrix;
+    $('qrStatus')?.remove?.();
+    const s = document.createElement('div'); s.id='qrStatus'; s.textContent = 'QR-паттерн загружен ✅'; s.style.color='#7ec8ff'; s.style.marginTop='6px';
+    document.querySelector('.left').insertBefore(s, document.querySelector('.preview'));
+    log('Magnetize: QR target loaded');
+    // set default global field if zero
+    if(parseFloat(field.value) === 0) { field.value = 1.2; fieldNum.value = parseFloat(field.value).toFixed(2); }
+    if(autoStartAnneal.checked){ $('annealStartBtn').click(); }
+  }catch(e){ alert('QR генерация не удалась: '+e); log('QR error: '+e); }
+});
+
+$('clearTargetBtn').addEventListener('click', ()=> { hMatrix = null; target = null; $('qrPreview').innerHTML=''; const s=$('qrStatus'); if(s) s.remove(); draw(); log('Target cleared'); });
+
+$('annealStartBtn').addEventListener('click', ()=> {
+  if(anneal) return;
+  anneal = true; aFrame=0; aTotal = Math.max(1, parseInt($('annealFrames').value)||100);
+  aT0 = parseFloat(temp.value); aT1 = parseFloat($('annealEnd').value); aSchedule = $('annealSchedule').value;
+  if(parseFloat(field.value) === 0) { field.value = 1.2; fieldNum.value = parseFloat(field.value).toFixed(2); }
+  running = false; frame(); log('Anneal start');
+});
+$('annealStopBtn').addEventListener('click', ()=> { anneal=false; log('Anneal stop'); });
+
+$('snapshotBtn').addEventListener('click', ()=> { const a = document.createElement('a'); a.href = canvas.toDataURL('image/png'); a.download = 'qr_snapshot_v5.png'; a.click(); });
+$('downloadJsonBtn').addEventListener('click', ()=> { const blob = new Blob([JSON.stringify({N,spin,hMatrix,steps,T:parseFloat(temp.value),H:parseFloat(field.value)})], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'ising_state_v5.json'; a.click(); URL.revokeObjectURL(url); });
+
+$('clearCharts').addEventListener('click', ()=> { dataX=[]; dataT=[]; dataM=[]; dataU=[]; Plotly.react(chartT, [{x:[],y:[],mode:'lines',name:'T'}]); Plotly.react(chartMU, [{x:[],y:[],mode:'lines',name:'M'},{x:[],y:[],mode:'lines',name:'U', yaxis:'y2'}]); log('Charts cleared'); });
+
+// sync range-number inputs
+temp.addEventListener('input', ()=> { tempNum.value = parseFloat(temp.value).toFixed(2); });
+tempNum.addEventListener('change', ()=> { temp.value = parseFloat(tempNum.value); });
+field.addEventListener('input', ()=> { fieldNum.value = parseFloat(field.value).toFixed(2); });
+fieldNum.addEventListener('change', ()=> { field.value = parseFloat(fieldNum.value); });
+targetAlpha.addEventListener('input', ()=> { targetAlphaVal.textContent = targetAlpha.value; draw(); });
+contrast.addEventListener('input', ()=> { contrastVal.textContent = parseFloat(contrast.value).toFixed(2); draw(); });
+coolRate.addEventListener('input', ()=> { coolRateVal.textContent = coolRate.value; });
+
+// helper updateStats
+function updateStats(){ $('steps').textContent = steps; $('M').textContent = magnetization().toFixed(2); $('U').textContent = totalE(true).toFixed(2); $('tempNum').value = parseFloat(temp.value).toFixed(2); $('fieldNum').value = parseFloat(field.value).toFixed(2); }
+
+// keyboard
+window.addEventListener('keydown', (e)=> { if(e.code==='Space'){ running = !running; if(running) frame(); else cancelAnimationFrame(anim); } });
+
+// init
+initGrid(N);
+draw();
+updateStats();
+
+</script>
+</body>
+</html>
